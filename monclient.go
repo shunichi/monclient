@@ -5,31 +5,36 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/cloudfoundry/gosigar"
-	"github.com/shunichi/go-cpuid"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
 	"strings"
+	//	"net/url"
+	//	"strconv"
+	"github.com/cloudfoundry/gosigar"
+	"github.com/jessevdk/go-flags"
+	"github.com/shunichi/go-cpuid"
 )
+
+var opts struct {
+	Verbose bool `short:"v" long:"verbose" description:"Show verbose information"`
+}
 
 var verbose bool = false
 
 func main() {
-
-	if hostname, err := os.Hostname(); err == nil {
-		fmt.Printf("hostname: %s\n", hostname)
+	if args, err := flags.Parse(&opts); err != nil {
+		fmt.Errorf("%s\n", err.Error())
+		os.Exit(1)
 	} else {
-		fmt.Println("failed to get hostname.")
+		fmt.Printf("%+v\n", opts)
+		for a := range args {
+			fmt.Println(a)
+		}
 	}
-
-	mem := sigar.Mem{}
-	mem.Get()
-
-	fmt.Printf("Mem used: %.1f/%.1f GiB\n", gb(mem.Used), gb(mem.Total))
-
-	postHostInfoByJson()
+	if opts.Verbose {
+		printHostInfoAsJson()
+	}
+	postHostInfoAsJson()
 }
 
 func hostname() string {
@@ -96,28 +101,47 @@ func makeHostInfo() HostInfo {
 	return HostInfo{hostname(), cpuid.BrandName(), mem.Total, makeSystemHddInfos()}
 }
 
-func makeHostInfoAsJson() (string, error) {
+func makeHostInfoAsJson(indent bool) (string, error) {
 	info := makeHostInfo()
-	if b, err := json.Marshal(info); err == nil {
+	var err error
+	var b []byte
+	if indent {
+		b, err = json.MarshalIndent(info, "", "  ")
+	} else {
+		b, err = json.Marshal(info)
+	}
+	if err == nil {
 		return string(b), nil
 	} else {
-		return nil, errors.New("json.Marshal failed")
+		return "", errors.New("json.Marshal failed")
 	}
 }
 
-func postHostInfoByJson() {
-	if json, err = makeHostInfoAsJson(); err != nil {
-		if resp, err := http.Post("http://localhost:4567/json", "application/json", bytes.NewReader(b)); err == nil {
-			fmt.Printf("status = %s\n", resp.Status)
+func printHostInfoAsJson() {
+	if json, err := makeHostInfoAsJson(true); err == nil {
+		fmt.Print(json + "\n")
+	}
+}
+
+func postHostInfoAsJson() {
+	if json, err := makeHostInfoAsJson(false); err == nil {
+		if resp, err := http.Post("http://localhost:4567/json", "application/json", strings.NewReader(json)); err == nil {
+			if opts.Verbose {
+				printResponse(resp)
+			}
+		} else {
+			fmt.Errorf("%s", err.Error())
 		}
 	}
-	// info := makeHostInfo()
-	// if b, err := json.Marshal(info); err == nil {
-	// 	fmt.Println(string(b))
-	// 	if resp, err := http.Post("http://localhost:4567/json", "application/json", bytes.NewReader(b)); err == nil {
-	// 		fmt.Printf("status = %s\n", resp.Status)
-	// 	}
-	// }
+}
+
+func printResponse(resp *http.Response) {
+	fmt.Printf("status = %s\n", resp.Status)
+
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(resp.Body)
+	s := buf.String()
+	fmt.Printf("body = %s\n", s)
 }
 
 func gb(bytes uint64) float64 {
